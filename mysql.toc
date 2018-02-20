@@ -1,0 +1,203 @@
+
+(defprotocol SQLConnection
+  (get-error [_])
+  )
+
+(inline C "
+#include <mysql.h>
+
+void close_mysql_conn(void *ptr) {
+   fprintf(stderr, \"Closed MySQL connection\\n\");
+   mysql_close((MYSQL *)ptr);
+}
+")
+
+(defn init* []
+  (inline C "
+  MYSQL *con = mysql_init(NULL);
+  if (con == NULL) {
+    return(nothing);
+  } else {
+    Value *opaque = opaqueValue((void *)con, close_mysql_conn);
+    return(maybe((List *)0, (Value *)0, opaque));
+  }
+"))
+
+(defn connect* [mysql host user password db port unix-socket flags]
+  ;; Private function. Use 'connect' insteaad.
+  (assert (instance? Opaque mysql))
+  (assert (instance? String host))
+  (assert (instance? String user))
+  (assert (instance? String password))
+  (assert (instance? String db))
+  (assert (instance? Integer port))
+  (assert (instance? String unix-socket))
+  (assert (instance? Integer flags))
+
+  (inline C "
+  MYSQL *conn = (MYSQL *)((Opaque *)mysql_0)->ptr;
+
+  String *host;
+  if (((String *)host_1)->len > 0) {
+    host = nullTerm(host_1);
+  } else {
+    host = NULL;
+    dec_and_free(host_1, 1);
+  }
+
+  String *user;
+  if (((String *)user_2)->len > 0) {
+    user = nullTerm(user_2);
+  } else {
+    user = NULL;
+    dec_and_free(user_2, 1);
+  }
+
+  String *pwd;
+  if (((String *)password_3)->len > 0) {
+    pwd = nullTerm(password_3);
+  } else {
+    pwd = NULL;
+    dec_and_free(password_3, 1);
+  }
+
+  String *db;
+  if (((String *)db_4)->len > 0) {
+    db = nullTerm(db_4);
+  } else {
+    db = NULL;
+    dec_and_free(db_4, 1);
+  }
+
+  String *socket;
+  if (((String *)unix_socket_6)->len > 0) {
+    socket = nullTerm(unix_socket_6);
+  } else {
+    socket = NULL;
+    dec_and_free(unix_socket_6, 1);
+  }
+
+  if (conn == NULL) {
+    dec_and_free(mysql_0, 1);
+    if (host) dec_and_free((Value *)host, 1);
+    if (user) dec_and_free((Value *)user, 1);
+    if (pwd) dec_and_free((Value *)pwd, 1);
+    dec_and_free(port_5, 1);
+    if (socket) dec_and_free((Value *)socket, 1);
+    dec_and_free(flags_7, 1);
+    return(nothing);
+  } else {
+    if (mysql_real_connect(conn, host ? host->buffer : NULL,
+                           user ? user->buffer : NULL,
+                           pwd ? pwd->buffer : NULL,
+                           db ? db->buffer : NULL,
+                           ((Integer *)port_5)->numVal,
+                           socket ? socket->buffer : NULL,
+                           ((Integer *)flags_7)->numVal) == NULL) {
+      dec_and_free(mysql_0, 1);
+      if (host) dec_and_free((Value *)host, 1);
+      if (user) dec_and_free((Value *)user, 1);
+      if (pwd) dec_and_free((Value *)pwd, 1);
+      dec_and_free(port_5, 1);
+      if (socket) dec_and_free((Value *)socket, 1);
+      dec_and_free(flags_7, 1);
+      return(nothing);
+    } else {
+      dec_and_free(mysql_0, 1);
+      if (host) dec_and_free((Value *)host, 1);
+      if (user) dec_and_free((Value *)user, 1);
+      if (pwd) dec_and_free((Value *)pwd, 1);
+      dec_and_free(port_5, 1);
+      if (socket) dec_and_free((Value *)socket, 1);
+      dec_and_free(flags_7, 1);
+      return(maybe((List *)0, (Value *)0, mysql_0));
+    }
+  }
+"))
+
+(defn mysql-get-error [conn]
+  (assert (instance? Opaque conn))
+  (inline C "
+  MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
+  Value *err_string = stringValue((char *)mysql_error(conn));
+  dec_and_free(conn_0, 1);
+  return(err_string); 
+"))
+
+(defprotocol MySQL
+  (connect [conn host user]
+    (assert (instance? String host))
+    (assert (instance? String user)))
+  (connect [conn host user password]
+    (assert (instance? String host))
+    (assert (instance? String user))
+    (assert (instance? String password)))
+  (connect [conn host user password db]
+    (assert (instance? String host))
+    (assert (instance? String user))
+    (assert (instance? String password))
+    (assert (instance? String db)))
+  (connect [conn host user password db port]
+    (assert (instance? String host))
+    (assert (instance? String user))
+    (assert (instance? String password))
+    (assert (instance? String db))
+    (assert (instance? Integer port)))
+  (connect [conn host user password db port unix-socket]
+    (assert (instance? String host))
+    (assert (instance? String user))
+    (assert (instance? String password))
+    (assert (instance? String db))
+    (assert (instance? Integer port))
+    (assert (instance? String unix-socket)))
+  (connect [conn host user password db port unix-socket flags]
+    (assert (instance? String host))
+    (assert (instance? String user))
+    (assert (instance? String password))
+    (assert (instance? String db))
+    (assert (instance? Integer port))
+    (assert (instance? String unix-socket))
+    (assert (instance? Integer flags))))
+
+(deftype MySQLConnection [conn]
+  Stringable
+  (string-list [_] (list "<MySQLConnection>"))
+
+  SQLConnection
+  (get-error [_]
+    (mysql-get-error conn))
+
+  MySQL
+  (connect [_ host user]
+   (connect* conn host user "" "" 0 "" 0))
+  (connect [_ host user password]
+   (connect* conn host user password "" 0 "" 0))
+  (connect [_ host user password db]
+   (connect* conn host user password db 0 "" 0))
+  (connect [_ host user password db port]
+   (connect* conn host user password db port "" 0))
+  (connect [_ host user password db port unix-socket]
+   (connect* conn host user password db port unix-socket 0))
+  (connect [_ host user password db port unix-socket flags]
+   (connect* conn host user password db port unix-socket flags))
+  )
+
+(defn init []
+  (map (init*) MySQLConnection))
+
+(main [_]
+      (for [conn (init)
+            _ (or (connect conn "localhost" "root")
+                  (do
+                    (println "err:" (get-error conn))
+                    nothing))]
+        (println "Connected to DB" conn))
+      (println)
+      (for [conn (init)
+            _ (or (connect conn "localhost" "root" "bogus")
+                  (do
+                    (println "err:" (get-error conn))
+                    nothing))]
+        (println "Connected to DB" conn))
+      (println)
+)
