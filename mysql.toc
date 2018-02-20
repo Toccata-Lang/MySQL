@@ -179,6 +179,21 @@ void close_mysql_conn(void *ptr) {
    (connect* conn host user password db port unix-socket flags))
   )
 
+(def CLIENT_FOUND_ROWS
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_FOUND_ROWS}"))
+(def CLIENT_NO_SCHEMA
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_NO_SCHEMA}"))
+(def CLIENT_COMPRESS
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_COMPRESS}"))
+(def CLIENT_IGNORE_SPACE
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_IGNORE_SPACE}"))
+(def CLIENT_LOCAL_FILES
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_LOCAL_FILES}"))
+(def CLIENT_MULTI_STATEMENTS
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_STATEMENTS}"))
+(def CLIENT_MULTI_RESULTS
+  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_RESULTS}"))
+
 (defn init []
   (map (init*) MySQLConnection))
 
