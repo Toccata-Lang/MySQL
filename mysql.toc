@@ -1,10 +1,18 @@
 
 (defprotocol SQLConnection
   (get-error [_])
+  (get-errno [_])
   )
 
 (inline C "
+
 #include <mysql.h>
+
+/*
+typedef struct {
+  int open;
+  FILE *fd;} fileDescStruct;
+// */
 
 void close_mysql_conn(void *ptr) {
    fprintf(stderr, \"Closed MySQL connection\\n\");
@@ -103,7 +111,6 @@ void close_mysql_conn(void *ptr) {
       dec_and_free(flags_7, 1);
       return(nothing);
     } else {
-      dec_and_free(mysql_0, 1);
       if (host) dec_and_free((Value *)host, 1);
       if (user) dec_and_free((Value *)user, 1);
       if (pwd) dec_and_free((Value *)pwd, 1);
@@ -124,40 +131,22 @@ void close_mysql_conn(void *ptr) {
   return(err_string); 
 "))
 
+(defn mysql-get-errno [conn]
+  (assert (instance? Opaque conn))
+  (inline C "
+  MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
+  Value *err_num = integerValue(mysql_errno(conn));
+  dec_and_free(conn_0, 1);
+  return(err_num); 
+"))
+
 (defprotocol MySQL
-  (connect [conn host user]
-    (assert (instance? String host))
-    (assert (instance? String user)))
-  (connect [conn host user password]
-    (assert (instance? String host))
-    (assert (instance? String user))
-    (assert (instance? String password)))
-  (connect [conn host user password db]
-    (assert (instance? String host))
-    (assert (instance? String user))
-    (assert (instance? String password))
-    (assert (instance? String db)))
-  (connect [conn host user password db port]
-    (assert (instance? String host))
-    (assert (instance? String user))
-    (assert (instance? String password))
-    (assert (instance? String db))
-    (assert (instance? Integer port)))
-  (connect [conn host user password db port unix-socket]
-    (assert (instance? String host))
-    (assert (instance? String user))
-    (assert (instance? String password))
-    (assert (instance? String db))
-    (assert (instance? Integer port))
-    (assert (instance? String unix-socket)))
-  (connect [conn host user password db port unix-socket flags]
-    (assert (instance? String host))
-    (assert (instance? String user))
-    (assert (instance? String password))
-    (assert (instance? String db))
-    (assert (instance? Integer port))
-    (assert (instance? String unix-socket))
-    (assert (instance? Integer flags))))
+  (connect [conn host user])
+  (connect [conn host user password])
+  (connect [conn host user password db])
+  (connect [conn host user password db port])
+  (connect [conn host user password db port unix-socket])
+  (connect [conn host user password db port unix-socket flags]))
 
 (deftype MySQLConnection [conn]
   Stringable
@@ -167,17 +156,25 @@ void close_mysql_conn(void *ptr) {
   (get-error [_]
     (mysql-get-error conn))
 
+  (get-errno [_]
+    (mysql-get-errno conn))
+
   MySQL
   (connect [_ host user]
    (connect* conn host user "" "" 0 "" 0))
+
   (connect [_ host user password]
    (connect* conn host user password "" 0 "" 0))
+
   (connect [_ host user password db]
    (connect* conn host user password db 0 "" 0))
+
   (connect [_ host user password db port]
    (connect* conn host user password db port "" 0))
+
   (connect [_ host user password db port unix-socket]
    (connect* conn host user password db port unix-socket 0))
+
   (connect [_ host user password db port unix-socket flags]
    (connect* conn host user password db port unix-socket flags))
   )
@@ -192,10 +189,12 @@ void close_mysql_conn(void *ptr) {
                     (println "err:" (get-error conn))
                     nothing))]
         (println "Connected to DB" conn))
+
       (println)
       (for [conn (init)
             _ (or (connect conn "localhost" "root" "bogus")
                   (do
+                    (println "err:" (get-errno conn))
                     (println "err:" (get-error conn))
                     nothing))]
         (println "Connected to DB" conn))
