@@ -2,6 +2,9 @@
 (defprotocol SQLConnection
   (get-error [_])
   (get-errno [_])
+  (query [_ query-str]
+    ;; TODO: maybe make this a safe string type
+    (assert (instance? String query-str)))
   )
 
 (inline C "
@@ -140,6 +143,33 @@ void close_mysql_conn(void *ptr) {
   return(err_num); 
 "))
 
+(defn mysql-real-query [conn query-str]
+  (assert (instance? Opaque conn))
+  (assert (instance? String query-str))
+  (inline C "
+  char *buffer;
+  int64_t len;
+
+  if (query_str_1->type == StringBufferType) {
+    buffer = ((String *)query_str_1)->buffer;
+    len = ((String *)query_str_1)->len;
+  } else if (query_str_1->type == SubStringType) {
+    buffer = ((SubString *)query_str_1)->buffer;
+    len = ((SubString *)query_str_1)->len;
+  }
+  MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
+
+  int64_t result = mysql_real_query(conn, buffer, len);
+  dec_and_free(conn_0, 1);
+  dec_and_free(query_str_1, 1);
+  if (result == 0) {
+    Value *err_num = integerValue(result);
+    return(maybeNothing); 
+  } else {
+    return(nothing);
+  }
+"))
+
 (defprotocol MySQL
   (connect [conn host user])
   (connect [conn host user password])
@@ -158,6 +188,9 @@ void close_mysql_conn(void *ptr) {
 
   (get-errno [_]
     (mysql-get-errno conn))
+  
+  (query [_ query-str]
+    (mysql-real-query conn query-str))
 
   MySQL
   (connect [_ host user]
@@ -202,7 +235,8 @@ void close_mysql_conn(void *ptr) {
             _ (or (connect conn "localhost" "root")
                   (do
                     (println "err:" (get-error conn))
-                    nothing))]
+                    nothing))
+            _ (query conn "SHOW DATABASES;")]
         (println "Connected to DB" conn))
 
       (println)
