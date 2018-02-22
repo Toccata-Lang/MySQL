@@ -11,20 +11,19 @@
 
 #include <mysql.h>
 
-/*
-typedef struct {
-  int open;
-  FILE *fd;} fileDescStruct;
-// */
-
 void close_mysql_conn(void *ptr) {
-   fprintf(stderr, \"Closed MySQL connection\\n\");
-   mysql_close((MYSQL *)ptr);
+  fprintf(stderr, \"Connection closed\\n\");
+  mysql_close((MYSQL *)ptr);
+}
+
+void free_mysql_results(void *ptr) {
+  fprintf(stderr, \"Results freed\\n\");
+  mysql_free_result((MYSQL_RES *)ptr);
 }
 ")
 
 (defn init* []
-  (inline C "
+  (inline C Maybe "
   MYSQL *con = mysql_init(NULL);
   if (con == NULL) {
     return(nothing);
@@ -45,7 +44,7 @@ void close_mysql_conn(void *ptr) {
   (assert (instance? String unix-socket))
   (assert (instance? Integer flags))
 
-  (inline C "
+  (inline C Maybe "
   MYSQL *conn = (MYSQL *)((Opaque *)mysql_0)->ptr;
 
   String *host;
@@ -127,7 +126,7 @@ void close_mysql_conn(void *ptr) {
 
 (defn mysql-get-error [conn]
   (assert (instance? Opaque conn))
-  (inline C "
+  (inline C String "
   MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
   Value *err_string = stringValue((char *)mysql_error(conn));
   dec_and_free(conn_0, 1);
@@ -136,17 +135,17 @@ void close_mysql_conn(void *ptr) {
 
 (defn mysql-get-errno [conn]
   (assert (instance? Opaque conn))
-  (inline C "
+  (inline C Integer "
   MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
   Value *err_num = integerValue(mysql_errno(conn));
   dec_and_free(conn_0, 1);
   return(err_num); 
 "))
 
-(defn mysql-real-query [conn query-str]
+(defn mysql-query [conn query-str]
   (assert (instance? Opaque conn))
   (assert (instance? String query-str))
-  (inline C "
+  (inline C Maybe "
   char *buffer;
   int64_t len;
 
@@ -163,11 +162,35 @@ void close_mysql_conn(void *ptr) {
   dec_and_free(conn_0, 1);
   dec_and_free(query_str_1, 1);
   if (result == 0) {
-    Value *err_num = integerValue(result);
     return(maybeNothing); 
   } else {
     return(nothing);
   }
+"))
+
+(defn mysql-store-result [conn]
+  (assert (instance? Opaque conn))
+  (inline C Maybe "
+  MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
+
+  MYSQL_RES *results = mysql_store_result(conn);
+  dec_and_free(conn_0, 1);
+  if (results == NULL) {
+    return(nothing); 
+  } else {
+    Value *opaque = opaqueValue((void *)results, free_mysql_results);
+    return(maybe((List *)0, (Value *)0, opaque));
+  }
+"))
+
+(defn mysql-field-count [conn]
+  (assert (instance? Opaque conn))
+  (inline C Integer "
+  MYSQL *conn = (MYSQL *)((Opaque *)conn_0)->ptr;
+
+  int64_t fieldCount = mysql_field_count(conn);
+  dec_and_free(conn_0, 1);
+  return(integerValue(fieldCount)); 
 "))
 
 (defprotocol MySQL
@@ -177,6 +200,42 @@ void close_mysql_conn(void *ptr) {
   (connect [conn host user password db port])
   (connect [conn host user password db port unix-socket])
   (connect [conn host user password db port unix-socket flags]))
+
+(defn mysql-fetch-row [result]
+  (assert (instance? Opaque result))
+  (assert-result row (instance? Maybe row))
+
+  (inline C Maybe "
+  MYSQL_RES *result = (MYSQL_RES *)((Opaque *)result_0)->ptr;
+  Vector *rowVect = empty_vect;
+
+  unsigned fieldCount = mysql_num_fields(result);
+  MYSQL_ROW row = mysql_fetch_row(result);
+  if (row != NULL)
+  {
+    unsigned long *lengths = mysql_fetch_lengths(result);
+    for(unsigned i = 0; i < fieldCount; i++)
+    {
+      String *strVal = malloc_string(lengths[i]);
+      strncpy(strVal->buffer, row[i], lengths[i]);
+      rowVect = mutateVectConj(rowVect, (Value *)strVal);
+    }
+    dec_and_free(result_0, 1);
+    return(maybe((List *)0, (Value *)0, (Value *)rowVect));
+  } else {
+    dec_and_free(result_0, 1);
+    return(nothing);
+  }
+"))
+
+(defn extract-all-results [results-vect mysql-results]
+  (assert (instance? Vector results-vect))
+  (assert (instance? Opaque mysql-results))
+  (either (map (mysql-fetch-row mysql-results)
+               (fn [row]
+                 (extract-all-results (conj results-vect row)
+                                      mysql-results)))
+          results-vect))
 
 (deftype MySQLConnection [conn]
   Stringable
@@ -190,7 +249,13 @@ void close_mysql_conn(void *ptr) {
     (mysql-get-errno conn))
   
   (query [_ query-str]
-    (mysql-real-query conn query-str))
+    (for [_ (mysql-query conn query-str)
+          :let [field-count (mysql-field-count conn)]
+          results (or (and (= 0 (mysql-field-count conn))
+                           (maybe []))
+                      (map (mysql-store-result conn)
+                           (partial extract-all-results [])))]
+      results))
 
   MySQL
   (connect [_ host user]
@@ -213,19 +278,19 @@ void close_mysql_conn(void *ptr) {
   )
 
 (def CLIENT_FOUND_ROWS
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_FOUND_ROWS}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_FOUND_ROWS}"))
 (def CLIENT_NO_SCHEMA
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_NO_SCHEMA}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_NO_SCHEMA}"))
 (def CLIENT_COMPRESS
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_COMPRESS}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_COMPRESS}"))
 (def CLIENT_IGNORE_SPACE
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_IGNORE_SPACE}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_IGNORE_SPACE}"))
 (def CLIENT_LOCAL_FILES
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_LOCAL_FILES}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_LOCAL_FILES}"))
 (def CLIENT_MULTI_STATEMENTS
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_STATEMENTS}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_STATEMENTS}"))
 (def CLIENT_MULTI_RESULTS
-  (inline C List "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_RESULTS}"))
+  (inline C Integer "(Value *)&(Integer){IntegerType,-1,CLIENT_MULTI_RESULTS}"))
 
 (defn init []
   (map (init*) MySQLConnection))
@@ -236,8 +301,9 @@ void close_mysql_conn(void *ptr) {
                   (do
                     (println "err:" (get-error conn))
                     nothing))
+            :let [_ (println "Connected to DB" conn)]
             _ (query conn "SHOW DATABASES;")]
-        (println "Connected to DB" conn))
+        (println (flatten _)))
 
       (println)
       (for [conn (init)
