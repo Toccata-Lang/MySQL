@@ -12,12 +12,10 @@
 #include <mysql.h>
 
 void close_mysql_conn(void *ptr) {
-  fprintf(stderr, \"Connection closed\\n\");
   mysql_close((MYSQL *)ptr);
 }
 
 void free_mysql_results(void *ptr) {
-  fprintf(stderr, \"Results freed\\n\");
   mysql_free_result((MYSQL_RES *)ptr);
 }
 ")
@@ -295,17 +293,28 @@ void free_mysql_results(void *ptr) {
 (defn init []
   (map (init*) MySQLConnection))
 
+(defn show-table [conn table-name]
+  (map (query conn (str "describe " table-name ";"))
+       (fn [fields]
+         (println (str table-name ":"))
+         (map fields println))))
+
+(defn show-database [conn db-name]
+  (for [_ (query conn (str "use " db-name ";"))
+        :let [_ (println "\n" db-name)]
+        table-names (map (query conn "show tables;") flatten)
+        _ (every table-names (partial show-table conn))]
+    '_))
+
 (main [_]
       (for [conn (init)
             _ (or (connect conn "localhost" "root")
                   (do
                     (println "err:" (get-error conn))
                     nothing))
-            :let [_ (println "Connected to DB" conn)]
-            _ (query conn "SHOW DATABASES;")]
-        (println (flatten _)))
-
-      (println)
+            db-names (map (query conn "show databases;") flatten)
+            _ (every db-names (partial show-database conn))]
+        '_)
       (for [conn (init)
             _ (or (connect conn "localhost" "root" "bogus")
                   (do
